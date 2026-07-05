@@ -190,12 +190,10 @@ class WalkingWindowPlugin(Star):
     @filter.command("窗")
     async def walking_window(self, event: AstrMessageEvent):
         """生成行走之窗风格的 meme 图片。用法：/窗 文本内容"""
-        raw = event.message_str.strip() if hasattr(event, 'message_str') else event.get_message_text().strip()
-        for prefix in ["/窗", "窗"]:
-            if raw.startswith(prefix):
-                raw = raw[len(prefix):].strip()
-                break
-        text = raw
+        raw = event.get_message_text().strip() if hasattr(event, 'get_message_text') else event.message_str.strip()
+        # 去掉第一个词（即命令及前缀，兼容任意唤醒符如 / ! # 等）
+        first_space = raw.find(' ')
+        text = raw[first_space:].strip() if first_space != -1 else ""
         
         template_config = self._get_template_config()
         if not template_config:
