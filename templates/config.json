@@ -1,0 +1,16 @@
+{
+  "templates": [
+    {
+      "name": "template0",
+      "file": "template0.jpg",
+      "text_area": {
+        "x1": 220,
+        "y1": 210,
+        "x2": 440,
+        "y2": 375
+      },
+      "font_size_range": [14, 36],
+      "padding": 5
+    }
+  ]
+}

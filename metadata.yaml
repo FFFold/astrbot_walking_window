@@ -1,0 +1,6 @@
+name: astrbot_walking_window
+author: Fold
+desc: 生成"行走之窗"风格的 meme 图片
+version: "1.0.0"
+display_name: 行走之窗
+short_desc: 在模板图上绘制文字生成 meme
