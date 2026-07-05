@@ -4,7 +4,6 @@ from astrbot.api import logger
 from pathlib import Path
 import json
 from PIL import Image, ImageDraw, ImageFont
-import textwrap
 import tempfile
 import uuid
 
@@ -39,92 +38,117 @@ class WalkingWindowPlugin(Star):
         """在模板图上绘制文字并返回输出路径"""
         template_path = self.templates_dir / template_config["file"]
         img = Image.open(template_path)
-        
+
         text_area = template_config["text_area"]
         padding = template_config.get("padding", 10)
         font_size_range = template_config.get("font_size_range", [14, 36])
-        
+
         draw_area = (
             text_area["x1"] + padding,
             text_area["y1"] + padding,
             text_area["x2"] - padding,
             text_area["y2"] - padding
         )
-        
+
         draw_area_width = draw_area[2] - draw_area[0]
         draw_area_height = draw_area[3] - draw_area[1]
-        
+
         font_size = self._calculate_font_size(text, font_size_range, draw_area_width, draw_area_height)
         font = self._get_font(font_size)
-        
-        wrapped_text = self._wrap_text(text, font_size, draw_area_width, font)
-        
-        # 计算文本总高度以实现垂直居中
-        lines = wrapped_text.split('\n')
-        line_height = font_size + 4
-        total_text_height = len(lines) * line_height
-        
-        # 垂直居中：计算起始Y坐标
+
+        lines = self._wrap_text(text, draw_area_width, font)
+        line_height = self._get_line_height(font)
+        total_text_height = len(lines) * (line_height + 4)
+
         y_offset = max(0, (draw_area_height - total_text_height) // 2)
         start_y = draw_area[1] + y_offset
-        
+
         draw = ImageDraw.Draw(img)
-        # 左对齐，垂直居中
-        draw.text(
-            (draw_area[0], start_y),
-            wrapped_text,
-            fill="black",
-            font=font
-        )
-        
-        # 使用唯一文件名避免并发冲突
+        y = start_y
+        for line in lines:
+            draw.text((draw_area[0], y), line, fill="black", font=font)
+            y += line_height + 4
+
         output_path = Path(tempfile.gettempdir()) / f"walking_window_{uuid.uuid4().hex}.png"
         img.save(output_path, "PNG")
         return output_path
 
     def _calculate_font_size(self, text, font_size_range, max_width, max_height):
-        """根据文本长度和区域高度计算合适的字号"""
+        """根据实际像素测量计算合适的字号"""
         min_size, max_size = font_size_range
-        
+
         for size in range(max_size, min_size - 1, -1):
             font = self._get_font(size)
-            # 使用正确的字符宽度估算
-            avg_char_width = size * 0.6 if not self._has_cjk(text) else size
-            lines = textwrap.wrap(text, width=max_width // avg_char_width)
-            total_height = len(lines) * (size + 4)
+            lines = self._wrap_text(text, max_width, font)
+            line_height = self._get_line_height(font)
+            total_height = len(lines) * (line_height + 4)
             if total_height <= max_height:
                 return size
-        
+
         return min_size
 
-    def _has_cjk(self, text):
-        """检查文本是否包含CJK字符"""
-        for char in text:
-            if '\u4e00' <= char <= '\u9fff' or '\u3000' <= char <= '\u303f':
-                return True
-        return False
+    def _get_line_height(self, font):
+        """获取字体实际行高"""
+        bbox = font.getbbox("Ay")
+        return bbox[3] - bbox[1]
 
     def _get_font(self, size):
         """获取指定大小的字体，优先使用支持中文的字体"""
-        # 尝试多种字体，优先使用支持中文的
-        font_names = ["msyh.ttc", "simhei.ttf", "simsun.ttc", "arial.ttf"]
-        for font_name in font_names:
+        font_paths = [
+            # Windows fonts
+            "msyh.ttc", "simhei.ttf", "simsun.ttc", "msyhbd.ttc", "msyhl.ttc",
+            # Linux/Docker: WenQuanYi
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
+            # Linux/Docker: Noto CJK
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansSC-Regular.otf",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
+            # Linux/Docker: DroidSansFallback
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            # Linux/Docker: AR PL UMing/UKai
+            "/usr/share/fonts/truetype/arphic/uming.ttc",
+            "/usr/share/fonts/truetype/arphic/ukai.ttc",
+            # macOS fonts
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/Arial.ttf",
+            "arial.ttf",
+        ]
+        for font_path in font_paths:
             try:
-                return ImageFont.truetype(font_name, size)
-            except OSError:
+                return ImageFont.truetype(font_path, size)
+            except (OSError, IOError):
                 continue
         return ImageFont.load_default()
 
-    def _wrap_text(self, text, font_size, max_width, font):
-        """自动换行文本，支持中文"""
-        # 根据是否包含CJK字符选择不同的宽度估算
-        if self._has_cjk(text):
-            avg_char_width = font_size  # CJK字符约为全角
-        else:
-            avg_char_width = font_size * 0.6  # 西文字符约为半角
-        
-        chars_per_line = max(1, int(max_width / avg_char_width))
-        return textwrap.fill(text, width=chars_per_line)
+    def _wrap_text(self, text, max_width, font):
+        """按单词+像素宽度换行（英文保持单词完整，超宽单词逐字拆分）"""
+        words = text.split()
+        lines = []
+        current_line = ""
+        for word in words:
+            test_line = current_line + (" " if current_line else "") + word
+            if font.getbbox(test_line)[2] <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                    current_line = ""
+                if font.getbbox(word)[2] <= max_width:
+                    current_line = word
+                else:
+                    for char in word:
+                        char_test = current_line + char
+                        if font.getbbox(char_test)[2] > max_width and current_line:
+                            lines.append(current_line)
+                            current_line = char
+                        else:
+                            current_line = char_test
+        if current_line:
+            lines.append(current_line)
+        return lines
 
     @filter.command("窗")
     async def walking_window(self, event: AstrMessageEvent, text: str = ""):
