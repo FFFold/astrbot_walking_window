@@ -14,6 +14,7 @@ class WalkingWindowPlugin(Star):
         self.plugin_dir = Path(__file__).parent
         self.templates_dir = self.plugin_dir / "templates"
         self.config = self._load_config()
+        self._cached_font_path = None
 
     def _load_config(self):
         """加载模板配置"""
@@ -94,23 +95,32 @@ class WalkingWindowPlugin(Star):
 
     def _get_font(self, size):
         """获取指定大小的字体，优先使用支持中文的字体"""
+        if self._cached_font_path:
+            try:
+                return ImageFont.truetype(self._cached_font_path, size)
+            except (OSError, IOError):
+                self._cached_font_path = None
+
         font_paths = [
             # Windows fonts
             "msyh.ttc", "simhei.ttf", "simsun.ttc", "msyhbd.ttc", "msyhl.ttc",
-            # Linux/Docker: WenQuanYi
+            # Debian/Ubuntu: wqy-microhei → .ttc
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            # Other distros: .ttf
             "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
             "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
-            # Linux/Docker: Noto CJK
+            # Noto CJK (opentype & truetype)
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansSC-Regular.otf",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
-            # Linux/Docker: DroidSansFallback
+            # DroidSansFallback
             "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-            # Linux/Docker: AR PL UMing/UKai
+            # AR PL UMing/UKai
             "/usr/share/fonts/truetype/arphic/uming.ttc",
             "/usr/share/fonts/truetype/arphic/ukai.ttc",
-            # macOS fonts
+            # macOS
             "/System/Library/Fonts/PingFang.ttc",
             "/System/Library/Fonts/STHeiti Light.ttc",
             "/System/Library/Fonts/Arial.ttf",
@@ -118,10 +128,37 @@ class WalkingWindowPlugin(Star):
         ]
         for font_path in font_paths:
             try:
-                return ImageFont.truetype(font_path, size)
+                font = ImageFont.truetype(font_path, size)
+                self._cached_font_path = font_path
+                logger.info(f"已加载字体: {font_path}")
+                return font
             except (OSError, IOError):
                 continue
+
+        font = self._find_font_fallback(size)
+        if font:
+            return font
+
+        logger.warning("未找到中文字体！中文可能显示为方框。请安装中文字体包：apt-get install fonts-wqy-microhei")
         return ImageFont.load_default()
+
+    def _find_font_fallback(self, size):
+        """遍历常见字体目录寻找可用的 TrueType 字体"""
+        scan_dirs = ["/usr/share/fonts/truetype", "/usr/share/fonts/opentype"]
+        for scan_dir in scan_dirs:
+            scan_path = Path(scan_dir)
+            if not scan_path.exists():
+                continue
+            for ext in ("*.ttf", "*.ttc", "*.otf"):
+                for font_file in sorted(scan_path.rglob(ext)):
+                    try:
+                        font = ImageFont.truetype(str(font_file), size)
+                        self._cached_font_path = str(font_file)
+                        logger.info(f"已自动发现并加载字体: {font_file}")
+                        return font
+                    except (OSError, IOError):
+                        continue
+        return None
 
     def _wrap_text(self, text, max_width, font):
         """按单词+像素宽度换行（英文保持单词完整，超宽单词逐字拆分）"""
